@@ -5,7 +5,7 @@
 let imePort = null;
 
 
-class IMEAdapter {
+export class IMEAdapter {
   
   #port;
   #handleMessageCb;
@@ -13,24 +13,34 @@ class IMEAdapter {
 
   constructor() {
     this.#init();
+
     this.#handleDisconnectCb = this.onDisconnect.bind(this);
     this.#handleMessageCb = this.onMessage.bind(this);
   }
 
   #init() {
-    this.#port = chrome.runtime.connect("enmcjlgogceppnhfkaimbjlcmcnmihbo");
-    this.#port.onMessage(this.#handleMessageCb);
-    this.#port.onDiconnect(this.#handleDisconnectCb);
+    // this.#port = chrome.runtime.connect("enmcjlgogceppnhfkaimbjlcmcnmihbo");
+    // this.#port.onMessage(this.#handleMessageCb);
+    // this.#port.onDiconnect(this.#handleDisconnectCb);
   }
 
   onMessage(message, port) {
     switch(message['type']) {
-      case "refresh":
+      case "refresh": // Show candidates and composition.
         let { data } = message['data'];
-        data
+        
 
     }
   }
+
+  getMessage(type) {
+    return new Promise((resolve, reject) => {
+      window.sendExternalMessage && sendExternalMessage("enmcjlgogceppnhfkaimbjlcmcnmihbo", {
+        type
+      }, resolve);
+    });
+  }
+
 
   onDisconnect(port) {
 

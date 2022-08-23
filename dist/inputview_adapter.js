@@ -2,9 +2,75 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
+
+
+// When Virtual Keyboard loading, connect shuangpin ime.
+
+let imePort = null;
+
 var CLOSURE_NO_DEPS=true;
 
 var controller;
+
+window.sendExternalMessage = chrome.runtime.sendMessage;
+const connectExtID = "enmcjlgogceppnhfkaimbjlcmcnmihbo";
+
+const IMEEventType = {
+  GET_CONFIG: "get_config",
+  GET_STATES: "get_states",
+  REFRESH: "refresh"
+}
+
+
+class IMEAdapter extends EventTarget {
+  
+  #port;
+  #handleMessageCb;
+  #handleDisconnectCb;
+
+  constructor() {
+    super();
+    this.#init();
+
+    this.#handleDisconnectCb = this.onDisconnect.bind(this);
+    this.#handleMessageCb = this.onMessage.bind(this);
+  }
+
+  #init() {
+    this.#port = chrome.runtime.connect(connectExtID);
+    this.#port.onMessage.addListener(this.#handleMessageCb);
+    this.#port.onDisconnect.addListener(this.#handleDisconnectCb);
+  }
+
+  onMessage(message, port) {
+    console.log('port.onMessage', message);
+    if (message['type']) {
+      this.dispatchEvent(new CustomEvent(message['type'], {detail: message['data']}));
+    }
+    console.error(message);
+  }
+
+  sendMessage(message) {
+    this.#port.postMessage(message);
+  }
+
+  getMessage(type) {
+    return new Promise((resolve, reject) => {
+      window.sendExternalMessage && sendExternalMessage(connectExtID, {
+        type
+      }, resolve);
+    });
+  }
+
+
+  onDisconnect(port) {
+
+  }
+
+}
+
+let imeAdapter;
+
 
 /**
  * Armed callback to be triggered when a keyset changes.
@@ -205,7 +271,34 @@ function registerInputviewApi() {
    * @private
    */
   function getKeyboardConfig_(callback) {
-    chrome.virtualKeyboardPrivate.getKeyboardConfig(callback);
+      callback({
+        "a11ymode": false,
+        "features": [
+            "voiceinput-enabled",
+            "autocomplete-enabled",
+            "autocorrect-enabled",
+            "spellcheck-enabled",
+            "handwriting-enabled",
+            "handwritinggesture-enabled",
+            "handwritinggestureediting-disabled",
+            "handwritinglegacyrecognition-disabled",
+            "handwritinglegacyrecognitionall-disabled",
+            "multiword-disabled",
+            "stylushandwriting-disabled",
+            "darkmode-enabled",
+            "newheader-disabled",
+            "borderedkey-enabled",
+            "multitouch-disabled",
+            "roundCorners-disabled",
+            "systemchinesephysicaltyping-disabled",
+            "systemjapanesephysicaltyping-disabled",
+            "multilingualtyping-disabled",
+            "autocorrectparamstuning-disabled"
+        ],
+        "hotrodmode": false,
+        "layout": "qwerty"
+    });
+    // chrome.virtualKeyboardPrivate.getKeyboardConfig(callback);
   }
 
   /**
@@ -378,36 +471,64 @@ if (!chrome.i18n) {
 }
 
 /**
+ * @todo Testing.
  * Trigger loading the virtual keyboard on completion of page load.
  */
 window.onload = function() {
-  var params = {};
-  var matches = window.location.href.match(/[#?].*$/);
-  if (matches && matches.length > 0) {
-    matches[0].slice(1).split('&').forEach(function(s) {
-      var pair = s.split('=');
-      params[pair[0]] = pair[1];
-    });
-  }
 
-  var keyset = params['id'] || getDefaultUsLayout();
-  var languageCode = params['language'] || 'en';
-  var passwordLayout = params['passwordLayout'] || 'us';
-  var name = params['name'] || 'English';
 
   overrideGetMessage();
   overrideSwitchToKeyset();
   overrideGetSpatialData();
   registerInputviewApi();
-  i18n.input.chrome.inputview.Controller.DEV = true;
-  i18n.input.chrome.inputview.Adapter.prototype.isSwitching = function() {
-    return false;
-  };
 
-  if (keyset != 'none') {
-    window.initializeVirtualKeyboard(keyset, languageCode, passwordLayout,
-        name);
-  }
+  imeAdapter = new IMEAdapter();
+
+  imeAdapter.getMessage(IMEEventType.GET_CONFIG).then((res) => {
+    console.log("GET_CONFIG", res);
+    if (!res) return;
+
+    let keyset = res['id'] || getDefaultUsLayout();
+    let languageCode = res['language'] || "en";
+    let passwordLayout = res['passwordLayout'] || 'us';
+
+    let name = res['name'] || 'English';
+
+    i18n.input.chrome.inputview.Controller.DEV = true;
+    i18n.input.chrome.inputview.Adapter.prototype.isSwitching = function() {
+      return false;
+    };
+
+    if (keyset != 'none') {
+      window.initializeVirtualKeyboard(keyset, languageCode, passwordLayout,
+          name);
+    }
+  })
+
+  imeAdapter.addEventListener(IMEEventType.REFRESH, (res) => {
+    let {text, cursor, candidates} = res.detail;
+    if (controller) { 
+      controller.onCandidatesBack_({source: text, candidates: candidates.map((candidate) => {
+        return {
+          candidate: candidate.target
+        }
+      })})
+    }
+  })
+  // var params = {};
+  // var matches = window.location.href.match(/[#?].*$/);
+  // if (matches && matches.length > 0) {
+  //   matches[0].slice(1).split('&').forEach(function(s) {
+  //     var pair = s.split('=');
+  //     params[pair[0]] = pair[1];
+  //   });
+  // }
+
+  // var keyset = params['id'] || getDefaultUsLayout();
+  // var languageCode = params['language'] || 'en';
+  // var passwordLayout = params['passwordLayout'] || 'us';
+  // var name = params['name'] || 'English';
+
 };
 
 /**

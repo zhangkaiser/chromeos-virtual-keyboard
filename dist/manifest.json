@@ -4,9 +4,10 @@
   "description": "__MSG_chos_inputtool_description__",
   "version": "1.0.6.0",
   "manifest_version": 2,
+  "default_locale": "en",
   "incognito": "split",
   "chrome_url_overrides": {
-    "keyboard": "index.html"
+    "keyboard": "keyboard.html"
   },
   "permissions": [
     "virtualKeyboardPrivate",
