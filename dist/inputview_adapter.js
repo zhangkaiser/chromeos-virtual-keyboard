@@ -13,12 +13,18 @@ var CLOSURE_NO_DEPS=true;
 var controller;
 
 window.sendExternalMessage = chrome.runtime.sendMessage;
+// Dev extension id.
+// const connectExtID = "bpakkjikcnbcocnmfljebbcjllaaaacp";
+
 const connectExtID = "enmcjlgogceppnhfkaimbjlcmcnmihbo";
 
 const IMEEventType = {
   GET_CONFIG: "get_config",
   GET_STATES: "get_states",
-  REFRESH: "refresh"
+  REFRESH: "refresh",
+  CLEAR: "clear",
+  TOGGLE_LANGUAGE_STATE: "lang_state",
+  VISIBILITY: "visibility"
 }
 
 
@@ -31,19 +37,18 @@ class IMEAdapter extends EventTarget {
   constructor() {
     super();
     this.#init();
-
-    this.#handleDisconnectCb = this.onDisconnect.bind(this);
-    this.#handleMessageCb = this.onMessage.bind(this);
   }
 
   #init() {
+    this.#handleDisconnectCb = this.onDisconnect.bind(this);
+    this.#handleMessageCb = this.onMessage.bind(this);
+
     this.#port = chrome.runtime.connect(connectExtID);
     this.#port.onMessage.addListener(this.#handleMessageCb);
     this.#port.onDisconnect.addListener(this.#handleDisconnectCb);
   }
 
   onMessage(message, port) {
-    console.log('port.onMessage', message);
     if (message['type']) {
       this.dispatchEvent(new CustomEvent(message['type'], {detail: message['data']}));
     }
@@ -51,7 +56,14 @@ class IMEAdapter extends EventTarget {
   }
 
   sendMessage(message) {
-    this.#port.postMessage(message);
+    try {
+
+      this.#port.postMessage(message);
+    } catch(e) {
+      this.init();
+      this.#port.postMessage(message);
+    }
+
   }
 
   getMessage(type) {
@@ -262,6 +274,8 @@ function registerInputviewApi() {
 
   function commitText_(text) {
     chrome.virtualKeyboardPrivate.insertText(text, logIfError_);
+    imeAdapter.sendMessage({ type: IMEEventType.CLEAR })
+    controller.resetAll();
   }
 
   /**
@@ -271,34 +285,34 @@ function registerInputviewApi() {
    * @private
    */
   function getKeyboardConfig_(callback) {
-      callback({
-        "a11ymode": false,
-        "features": [
-            "voiceinput-enabled",
-            "autocomplete-enabled",
-            "autocorrect-enabled",
-            "spellcheck-enabled",
-            "handwriting-enabled",
-            "handwritinggesture-enabled",
-            "handwritinggestureediting-disabled",
-            "handwritinglegacyrecognition-disabled",
-            "handwritinglegacyrecognitionall-disabled",
-            "multiword-disabled",
-            "stylushandwriting-disabled",
-            "darkmode-enabled",
-            "newheader-disabled",
-            "borderedkey-enabled",
-            "multitouch-disabled",
-            "roundCorners-disabled",
-            "systemchinesephysicaltyping-disabled",
-            "systemjapanesephysicaltyping-disabled",
-            "multilingualtyping-disabled",
-            "autocorrectparamstuning-disabled"
-        ],
-        "hotrodmode": false,
-        "layout": "qwerty"
-    });
-    // chrome.virtualKeyboardPrivate.getKeyboardConfig(callback);
+    //   callback({
+    //     "a11ymode": false,
+    //     "features": [
+    //         "voiceinput-enabled",
+    //         "autocomplete-enabled",
+    //         "autocorrect-enabled",
+    //         "spellcheck-enabled",
+    //         "handwriting-enabled",
+    //         "handwritinggesture-enabled",
+    //         "handwritinggestureediting-disabled",
+    //         "handwritinglegacyrecognition-disabled",
+    //         "handwritinglegacyrecognitionall-disabled",
+    //         "multiword-disabled",
+    //         "stylushandwriting-disabled",
+    //         "darkmode-enabled",
+    //         "newheader-disabled",
+    //         "borderedkey-enabled",
+    //         "multitouch-disabled",
+    //         "roundCorners-disabled",
+    //         "systemchinesephysicaltyping-disabled",
+    //         "systemjapanesephysicaltyping-disabled",
+    //         "multilingualtyping-disabled",
+    //         "autocorrectparamstuning-disabled"
+    //     ],
+    //     "hotrodmode": false,
+    //     "layout": "qwerty"
+    // });
+    chrome.virtualKeyboardPrivate.getKeyboardConfig(callback);
   }
 
   /**
@@ -375,7 +389,6 @@ function registerInputviewApi() {
    * @param {!Object} keyData Description of the key event.
    */
   function sendKeyEvent_(keyData) {
-    console.log('inputview_adapter -> keyData', keyData);
     keyData.forEach(function(data) {
       var charValue = data.key.length == 1 ? data.key.charCodeAt(0) : 0;
       var keyCode = data.keyCode ? data.keyCode :
@@ -447,12 +460,27 @@ function registerInputviewApi() {
 
   var defaultSendMessage = registerFunction('chrome.runtime.sendMessage');
   registerFunction('chrome.runtime.sendMessage', function(message) {
-    if (message.type == 'send_key_event')
-      sendKeyEvent_(message.keyData);
-    else if (message.type == 'commit_text')
-      commitText_(message.text);
-    else
-      defaultSendMessage(message);
+    switch(message.type) {
+      case "send_key_event":
+        return sendKeyEvent_(message.keyData);
+      case "commit_text":
+        return commitText_(message.text);
+      case "select_candidate":
+        return commitText_(message.candidate.candidate);
+      case "toggle_language_state":
+        return imeAdapter.sendMessage({type: IMEEventType.TOGGLE_LANGUAGE_STATE, data: {
+          value: message.msg
+        }});
+      case "visibility_change":
+        return imeAdapter.sendMessage({
+          type: IMEEventType.VISIBILITY,
+          data: {
+            value: message.visibility
+          }
+        })
+      default:
+        defaultSendMessage(message);
+    }
   });
 }
 
@@ -476,7 +504,6 @@ if (!chrome.i18n) {
  */
 window.onload = function() {
 
-
   overrideGetMessage();
   overrideSwitchToKeyset();
   overrideGetSpatialData();
@@ -485,7 +512,6 @@ window.onload = function() {
   imeAdapter = new IMEAdapter();
 
   imeAdapter.getMessage(IMEEventType.GET_CONFIG).then((res) => {
-    console.log("GET_CONFIG", res);
     if (!res) return;
 
     let keyset = res['id'] || getDefaultUsLayout();
@@ -508,13 +534,16 @@ window.onload = function() {
   imeAdapter.addEventListener(IMEEventType.REFRESH, (res) => {
     let {text, cursor, candidates} = res.detail;
     if (controller) { 
+      if (candidates.length == 0) candidates = [{target: '123'},{target: '123'},{target: '123'},{target: '123'},]
       controller.onCandidatesBack_({source: text, candidates: candidates.map((candidate) => {
         return {
           candidate: candidate.target
         }
       })})
     }
-  })
+  });
+
+  
   // var params = {};
   // var matches = window.location.href.match(/[#?].*$/);
   // if (matches && matches.length > 0) {
